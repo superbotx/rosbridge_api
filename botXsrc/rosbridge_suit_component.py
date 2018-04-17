@@ -18,6 +18,8 @@ class RosbridgeSuitComponent(BaseComponent):
         self.bridge_proc_id = external_command_pool.start_command(command)
         self.connected = False
         self.running = True
+        self.pub_callbacks = {}
+        self.srv_callbacks = {}
         self.thread_stopped = False
         self.q = queue.Queue()
         self.ws = WebSocket('ws://localhost:9090')
@@ -30,18 +32,26 @@ class RosbridgeSuitComponent(BaseComponent):
                 if not self.running:
                     self.thread_stopped = True
                     return
-                if event.name == 'connected':
-                    print('responding to poll...')
+                if event.name == 'connecting':
+                    print('connecting...')
+                elif event.name == 'connected':
+                    print('connected')
                     self.connected = True
                 elif event.name == 'pong':
                     print('received pong')
-                    print(event)
                 elif event.name == 'poll':
-                    print('received polling')
-                    if not self.q.empty():
-                        req = self.q.get()
-                        print('send ', req)
-                        self.ws.send_text(req)
+                    print('received poll')
+                elif event.name == 'text':
+                    json_str = event.text
+                    data = json.loads(json_str)
+                    if data['op'] == 'publish':
+                        topic_id = data['topic']
+                        self.pub_callbacks[topic_id](data['msg'])
+                    elif data['op'] == 'service_response':
+                        service_id = data['service']
+                        self.pub_callbacks[service_id](data['result'])
+                    else:
+                        print('unknown data: ', data)
                 else:
                     print('unhandled event: ', event.name)
                     print(event)
@@ -54,13 +64,36 @@ class RosbridgeSuitComponent(BaseComponent):
             time.sleep(1)
         external_command_pool.end_command(self.bridge_proc_id)
 
-    def subscribe(self, topic, type):
+    def send_req(self, req):
+        while not self.connected:
+            time.sleep(1)
+        self.ws.send_text(req)
+
+    def subscribe(self, topic, type, callback):
         req = {
             'op': 'subscribe',
             'topic': topic,
             'type': type
         }
-        self.q.put(json.dumps(req))
+        self.pub_callbacks[topic] = callback
+        self.send_req(json.dumps(req))
+
+    def publish(self, topic, msg):
+        req = {
+            'op': 'publish',
+            'topic': topic,
+            'msg': msg
+        }
+        self.send_req(json.dumps(req))
+
+    def call_service(self, service, callback, args=[]):
+        req = {
+            'op': 'call_service',
+            'service': service,
+            'args': args
+        }
+        self.srv_callbacks[service] = callback
+        self.send_req(json.dumps(req))
 
     def advertise(self, topic, type):
         req = {
@@ -68,4 +101,4 @@ class RosbridgeSuitComponent(BaseComponent):
             'topic': topic,
             'type': type
         }
-        self.q.put(json.dumps(req))
+        self.send_req(json.dumps(req))
