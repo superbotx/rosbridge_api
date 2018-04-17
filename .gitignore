@@ -1,0 +1,7 @@
+botX_modules/*
+external_modules/*
+.DS_Store
+*.pyc
+__pycache__
+!botX_modules/__init__.py
+tmp/*
