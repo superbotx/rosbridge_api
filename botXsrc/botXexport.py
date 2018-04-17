@@ -31,4 +31,11 @@ documentation generation.
 
 Modify the following variable to your needs
 """
-botXexport = {}
+from .rosbridge_suit_component import RosbridgeSuitComponent
+
+botXexport = {
+    'rosbridge_suit_component': {
+        'module': RosbridgeSuitComponent,
+        'type': 'component',
+    }
+}
