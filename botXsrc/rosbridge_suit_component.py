@@ -12,19 +12,24 @@ class RosbridgeSuitComponent(BaseComponent):
 
     def __init__(self):
         super(RosbridgeSuitComponent, self).__init__()
-
-    def setup(self):
-        command = 'roslaunch rosbridge_server rosbridge_websocket.launch'
-        self.bridge_proc_id = external_command_pool.start_command(command)
+        self.is_setup = False
         self.connected = False
         self.running = True
         self.pub_callbacks = {}
         self.srv_callbacks = {}
         self.thread_stopped = False
         self.q = queue.Queue()
+
+    def setup(self):
+        if self.is_setup:
+            print('setup is done earlier, return')
+            return
+        command = 'roslaunch rosbridge_server rosbridge_websocket.launch'
+        self.bridge_proc_id = external_command_pool.start_command(command)
         self.ws = WebSocket('ws://localhost:9090')
         self.monitor_t = Thread(target=self.monitor)
         self.monitor_t.start()
+        self.is_setup = True
 
     def monitor(self):
         for event in persist(self.ws):
@@ -46,10 +51,12 @@ class RosbridgeSuitComponent(BaseComponent):
                     data = json.loads(json_str)
                     if data['op'] == 'publish':
                         topic_id = data['topic']
-                        self.pub_callbacks[topic_id](data['msg'])
+                        if topic_id in self.pub_callbacks:
+                            self.pub_callbacks[topic_id](data['msg'])
                     elif data['op'] == 'service_response':
                         service_id = data['service']
-                        self.pub_callbacks[service_id](data['result'])
+                        if service_id in self.srv_callbacks:
+                            self.srv_callbacks[service_id](data['result'])
                     else:
                         print('unknown data: ', data)
                 else:
@@ -67,7 +74,7 @@ class RosbridgeSuitComponent(BaseComponent):
     def send_req(self, req):
         while not self.connected:
             time.sleep(1)
-        self.ws.send_text(req)
+        self.ws.send_text(json.dumps(req))
 
     def subscribe(self, topic, type, callback):
         req = {
@@ -76,7 +83,15 @@ class RosbridgeSuitComponent(BaseComponent):
             'type': type
         }
         self.pub_callbacks[topic] = callback
-        self.send_req(json.dumps(req))
+        self.send_req(req)
+
+    def unsubscribe(self, topic):
+        req = {
+            'op': 'unsubscribe',
+            'topic': topic
+        }
+        del self.pub_callbacks[topic]
+        self.send_req(req)
 
     def publish(self, topic, msg):
         req = {
@@ -84,7 +99,7 @@ class RosbridgeSuitComponent(BaseComponent):
             'topic': topic,
             'msg': msg
         }
-        self.send_req(json.dumps(req))
+        self.send_req(req)
 
     def call_service(self, service, callback, args=[]):
         req = {
@@ -93,7 +108,15 @@ class RosbridgeSuitComponent(BaseComponent):
             'args': args
         }
         self.srv_callbacks[service] = callback
-        self.send_req(json.dumps(req))
+        self.send_req(req)
+
+    def respond_service(self, service, result):
+        req = {
+            'op': 'service_response',
+            'service': service,
+            'result': result
+        }
+        self.send_req(req)
 
     def advertise(self, topic, type):
         req = {
@@ -101,4 +124,26 @@ class RosbridgeSuitComponent(BaseComponent):
             'topic': topic,
             'type': type
         }
-        self.send_req(json.dumps(req))
+        self.send_req(req)
+
+    def advertise_service(self, type, service):
+        req = {
+            'op': 'advertise_service',
+            'type': type,
+            'service': service
+        }
+        self.send_req(req)
+
+    def unadvertise(self, topic):
+        req = {
+            'op': 'unadvertise',
+            'topic': topic
+        }
+        self.send_req(req)
+
+    def unadvertise_service(self, service):
+        req = {
+            'op': 'unadvertise_service',
+            'service': service
+        }
+        self.send_req(req)
